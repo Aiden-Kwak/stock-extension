@@ -1,0 +1,25 @@
+{
+  "name": "focusboard-extension",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint .",
+    "proxy": "node proxy/server.js"
+  },
+  "dependencies": {
+    "lightweight-charts": "4.1.0",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "prop-types": "15.8.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "4.0.3",
+    "eslint": "8.57.0",
+    "eslint-plugin-react": "7.33.2",
+    "vite": "4.5.0"
+  }
+}
