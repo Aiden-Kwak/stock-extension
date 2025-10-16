@@ -9,12 +9,12 @@
    - `.env` 파일을 생성하고 아래 값을 채워 넣습니다.
      ```bash
      VITE_CG_KEY=YOUR_CG_DEMO_KEY
-     VITE_FMP_KEY=YOUR_FMP_KEY # 선택 사항 (SerpApi 장애 시 대체)
+     VITE_FMP_KEY=YOUR_FMP_KEY # 필수 (Financial Modeling Prep)
      # 선택 사항: 높은 호출 한도를 위해 SerpApi 키를 사용하는 경우 아래 값을 추가하세요.
      # VITE_SERP_KEY=YOUR_SERPAPI_KEY
      VITE_PROXY_URL=https://your-proxy-host
      ```
-   - CoinGecko 키가 없으면 코인 차트가 비활성화되며, SerpApi는 키 없이도 작동합니다. FMP 키는 백업 데이터 소스로 활용됩니다.
+   - CoinGecko 키가 없으면 코인 차트가 비활성화되며, SerpApi는 키 없이도 작동합니다. FMP 키는 주식 차트와 가격 데이터를 위해 필수이며, 저장소에 포함된 `.env` 기본값을 그대로 사용하거나 필요 시 본인 키로 교체하세요.
 3. 빌드 실행
    ```bash
    npm run build

@@ -66,6 +66,19 @@ const fetchJson = async (url, { signal } = {}) => {
   return response.json();
 };
 
+const parseTimestamp = (value) => {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) {
+      return Number(numeric) * 1000;
+    }
+    return null;
+  }
+  return parsed;
+};
+
 export const fetchCoinChart = (id, { signal } = {}) => {
   if (!CG_KEY) {
     const error = new Error("CoinGecko 키가 필요합니다.");
@@ -198,5 +211,113 @@ export const fetchStockQuotes = async (symbols, { signal } = {}) => {
       }
       throw new Error(`주식 데이터를 찾을 수 없습니다. (${symbol})`);
     });
+  });
+};
+
+const HISTORY_CONFIG = {
+  "1D": { range: "1D" },
+  "5D": { range: "5D" },
+  "1Y": { range: "1Y" },
+  "5Y": { range: "5Y" },
+};
+
+const sortByTime = (points) => points.slice().sort((a, b) => a.time - b.time);
+
+const mapHistoricalPoints = (entries, valueKey = "close") =>
+  entries
+    .map((item) => {
+      const timestamp = parseTimestamp(item.date ?? item.timestamp ?? item.time);
+      const value = Number(item[valueKey] ?? item.close ?? item.price);
+      if (!Number.isFinite(value) || !Number.isFinite(timestamp)) {
+        return null;
+      }
+      return { time: Math.floor(timestamp / 1000), value };
+    })
+    .filter(Boolean);
+
+export const fetchStockHistory = async (symbol, range, { signal } = {}) => {
+  const normalized = symbol?.trim().toUpperCase();
+  if (!normalized) {
+    throw new Error("유효한 티커가 필요합니다.");
+  }
+
+  const config = HISTORY_CONFIG[range] ?? HISTORY_CONFIG["1D"];
+  const query = toSerpQuery(normalized);
+  if (!query) {
+    throw new Error("지원하지 않는 종목입니다.");
+  }
+
+  const cacheKey = `history:${normalized}:${config.range}`;
+  return withCache(cacheKey, async () => {
+    const url = new URL("https://serpapi.com/search.json");
+    url.searchParams.set("engine", "google_finance");
+    url.searchParams.set("q", query);
+    url.searchParams.set("range", config.range);
+    if (SERP_KEY) {
+      url.searchParams.set("api_key", SERP_KEY);
+    }
+
+    const data = await fetchJson(url.toString(), { signal });
+    if (data?.error) {
+      throw new Error(data.error);
+    }
+
+    const graph = Array.isArray(data?.graph) ? data.graph : [];
+    const points = sortByTime(mapHistoricalPoints(graph, "price"));
+    const lastPoint = points.length > 0 ? points[points.length - 1] : null;
+
+    const timestampCandidates = [
+      data?.finance_results?.price?.last_refreshed_utc,
+      data?.finance_results?.price?.last_refresh_time_utc,
+      data?.finance_results?.price?.updated_utc,
+    ]
+      .map((value) => parseTimestamp(value))
+      .filter((value) => Number.isFinite(value));
+
+    const fallbackAsOf = timestampCandidates.length > 0 ? Math.floor(timestampCandidates[0] / 1000) : null;
+    const asOf = lastPoint?.time ?? fallbackAsOf;
+
+    return {
+      symbol: normalized,
+      points,
+      meta: {
+        asOf,
+      },
+    };
+  });
+};
+
+export const searchStocks = async (query, { signal, limit = 8 } = {}) => {
+  const trimmed = query?.trim();
+  if (!trimmed) {
+    return [];
+  }
+
+  if (!FMP_KEY) {
+    const error = new Error("Financial Modeling Prep API 키가 필요합니다.");
+    error.code = "MISSING_FMP_KEY";
+    throw error;
+  }
+
+  const key = `search:${trimmed.toLowerCase()}:${limit}`;
+  return withCache(key, async () => {
+    const url = new URL("https://financialmodelingprep.com/api/v3/search-ticker");
+    url.searchParams.set("query", trimmed);
+    url.searchParams.set("limit", String(limit));
+    url.searchParams.set("exchange", "NASDAQ,NYSE,AMEX");
+    url.searchParams.set("apikey", FMP_KEY);
+
+    const data = await fetchJson(url.toString(), { signal });
+    if (!Array.isArray(data)) {
+      return [];
+    }
+
+    return data
+      .filter((item) => item.symbol)
+      .map((item) => ({
+        symbol: item.symbol.toUpperCase(),
+        name: item.name || item.symbol.toUpperCase(),
+        exchange: item.exchangeShortName || item.stockExchange || "",
+      }));
   });
 };
