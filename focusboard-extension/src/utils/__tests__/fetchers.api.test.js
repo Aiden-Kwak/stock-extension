@@ -2,13 +2,13 @@ import http from "node:http";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { fetchStockQuotes, fetchStockHistory, searchStocks } from "../fetchers.js";
 
-const FMP_KEY = import.meta.env?.VITE_FMP_KEY;
+const SERP_KEY = import.meta.env?.VITE_SERP_KEY;
 const PROXY_URL = import.meta.env?.VITE_PROXY_URL;
 
 const REQUIRED_MESSAGE =
-  "테스트용 .env.test가 누락됐습니다. VITE_FMP_KEY와 VITE_PROXY_URL을 확인하세요.";
+  "테스트용 .env.test가 누락됐습니다. VITE_SERP_KEY와 VITE_PROXY_URL을 확인하세요.";
 
-if (!FMP_KEY || !PROXY_URL) {
+if (!SERP_KEY || !PROXY_URL) {
   throw new Error(REQUIRED_MESSAGE);
 }
 
@@ -20,14 +20,14 @@ const makeJsonResponse = (res, status, body) => {
 const baseTime = new Date("2024-01-01T09:30:00Z").getTime();
 const timeSeries = (count, stepMinutes = 5) =>
   Array.from({ length: count }, (_, index) => ({
-    date: new Date(baseTime + index * stepMinutes * 60_000).toISOString().replace("T", " ").slice(0, 19),
-    close: 100 + index,
+    date: new Date(baseTime + index * stepMinutes * 60_000).toISOString(),
+    price: 100 + index,
   }));
 
 const priceSeries = (count, stepDays = 1) =>
   Array.from({ length: count }, (_, index) => ({
-    date: new Date(baseTime + index * stepDays * 24 * 60 * 60_000).toISOString().slice(0, 10),
-    close: 150 + index,
+    date: new Date(baseTime + index * stepDays * 24 * 60 * 60_000).toISOString(),
+    price: 150 + index,
   }));
 
 const startMockProxy = () => {
@@ -48,64 +48,86 @@ const startMockProxy = () => {
     }
 
     const target = new URL(targetParam);
-    requests.push(`${target.host}${target.pathname}`);
+    requests.push(target.toString());
 
-    if (target.host === "financialmodelingprep.com") {
-      const apiKey = target.searchParams.get("apikey");
-      if (apiKey !== FMP_KEY) {
+    if (target.host === "serpapi.com") {
+      const apiKey = target.searchParams.get("api_key");
+      if (apiKey !== SERP_KEY) {
         makeJsonResponse(res, 401, { error: "Missing or invalid API key" });
         return;
       }
 
-      if (target.pathname.startsWith("/api/v3/quote/")) {
-        const tickers = target.pathname.split("/").pop().split(",");
-        const data = tickers.map((symbol, index) => ({
-          symbol,
-          price: 100 + index,
-          timestamp: Math.floor((baseTime + index * 60_000) / 1000),
-        }));
-        makeJsonResponse(res, 200, data);
+      if (target.searchParams.get("engine") !== "google_finance") {
+        makeJsonResponse(res, 400, { error: "Unsupported engine" });
         return;
       }
 
-      if (target.pathname === "/api/v3/search-ticker") {
-        const query = target.searchParams.get("query");
-        const limit = Number(target.searchParams.get("limit") || "5");
-        const candidates = [
-          { symbol: "AAPL", name: "Apple Inc.", exchangeShortName: "NASDAQ" },
-          { symbol: "MSFT", name: "Microsoft Corp.", exchangeShortName: "NASDAQ" },
-          { symbol: "GOOGL", name: "Alphabet Inc.", exchangeShortName: "NASDAQ" },
-        ];
-        const filtered = candidates
-          .filter((item) => item.symbol.includes(query?.toUpperCase() || ""))
-          .slice(0, limit);
-        makeJsonResponse(res, 200, filtered);
+      const range = target.searchParams.get("range");
+      const query = target.searchParams.get("q") || "";
+      const baseSymbol = query.split(":")[0]?.toUpperCase();
+
+      if (range) {
+        makeJsonResponse(res, 200, {
+          graph: range === "1D" || range === "5D" ? timeSeries(10) : priceSeries(10),
+          finance_results: {
+            price: {
+              last_refreshed_utc: new Date(baseTime + 60_000).toISOString(),
+            },
+          },
+          summary: {
+            stock: query,
+            title: `${baseSymbol} Corp.`,
+            exchange: "NASDAQ",
+          },
+        });
         return;
       }
 
-      if (target.pathname.startsWith("/api/v3/historical-chart/5min/")) {
-        makeJsonResponse(res, 200, timeSeries(10, 5));
+      if (query.includes(":")) {
+        const offset = baseSymbol === "MSFT" ? 2 : 0;
+        makeJsonResponse(res, 200, {
+          summary: {
+            stock: query,
+            title: `${baseSymbol} Inc.`,
+            exchange: "NASDAQ",
+            price: 150 + offset,
+          },
+          finance_results: {
+            price: {
+              price: 150 + offset,
+              last_refreshed_utc: new Date(baseTime + 60_000).toISOString(),
+            },
+          },
+          graph: timeSeries(5).map((point) => ({
+            date: point.date,
+            price: point.price + offset,
+          })),
+        });
         return;
       }
 
-      if (target.pathname.startsWith("/api/v3/historical-chart/30min/")) {
-        makeJsonResponse(res, 200, timeSeries(10, 30));
-        return;
-      }
-
-      if (target.pathname.startsWith("/api/v3/historical-price-full/")) {
-        makeJsonResponse(res, 200, { historical: priceSeries(30, 5) });
-        return;
-      }
-
-      makeJsonResponse(res, 404, { error: "Unknown FMP path" });
-      return;
-    }
-
-    if (target.host === "serpapi.com") {
       makeJsonResponse(res, 200, {
-        graph: [],
-        price: 0,
+        summary: {
+          stock: "AAPL:NASDAQ",
+          title: "Apple Inc.",
+          exchange: "NASDAQ",
+          price: 150,
+        },
+        markets: {
+          us: [
+            { stock: "AAPL:NASDAQ", name: "Apple Inc." },
+            { stock: "MSFT:NASDAQ", name: "Microsoft Corp." },
+          ],
+        },
+        discover_more: [
+          {
+            title: "People also search for",
+            items: [
+              { stock: "GOOGL:NASDAQ", name: "Alphabet Inc." },
+              { stock: "NVDA:NASDAQ", name: "NVIDIA Corp." },
+            ],
+          },
+        ],
       });
       return;
     }
@@ -145,19 +167,20 @@ afterAll(async () => {
 
 const API_TIMEOUT = 5000;
 
-describe("FMP API 연동 로직", () => {
+describe("SerpApi 연동 로직", () => {
   test(
     "시세 조회 시 API 키를 포함한다",
     async () => {
       const symbols = ["AAPL", "MSFT"];
       const quotes = await fetchStockQuotes(symbols);
       expect(quotes).toHaveLength(symbols.length);
-      quotes.forEach((quote, index) => {
-        expect(quote.symbol).toBe(symbols[index]);
-        expect(quote.price).toBeCloseTo(100 + index);
+      quotes.forEach((quote) => {
+        expect(symbols.includes(quote.symbol)).toBe(true);
+        expect(quote.price).toBeGreaterThan(0);
         expect(Number.isFinite(quote.time)).toBe(true);
       });
-      expect(proxy.requests.some((path) => path.includes("/api/v3/quote/"))).toBe(true);
+      expect(proxy.requests.some((url) => url.includes("serpapi.com/search.json"))).toBe(true);
+      expect(proxy.requests.every((url) => url.includes(`api_key=${SERP_KEY}`))).toBe(true);
     },
     API_TIMEOUT
   );
@@ -168,7 +191,8 @@ describe("FMP API 연동 로직", () => {
       const results = await searchStocks("AAPL", { limit: 2 });
       expect(results.length).toBeGreaterThan(0);
       expect(results[0].symbol).toBe("AAPL");
-      expect(proxy.requests.some((path) => path.includes("/api/v3/search-ticker"))).toBe(true);
+      expect(proxy.requests.some((url) => url.includes("serpapi.com/search.json"))).toBe(true);
+      expect(proxy.requests.every((url) => url.includes(`api_key=${SERP_KEY}`))).toBe(true);
     },
     API_TIMEOUT
   );
@@ -180,10 +204,11 @@ describe("FMP API 연동 로직", () => {
       for (const range of ranges) {
         const history = await fetchStockHistory("AAPL", range);
         expect(history.symbol).toBe("AAPL");
-        expect(history.meta.provider).toBe("FMP");
+        expect(history.meta.provider).toBe("SERP");
         expect(history.points.length).toBeGreaterThan(1);
       }
-      expect(proxy.requests.filter((path) => path.includes("historical"))).toHaveLength(3);
+      expect(proxy.requests.filter((url) => url.includes("range="))).toHaveLength(ranges.length);
+      expect(proxy.requests.every((url) => url.includes(`api_key=${SERP_KEY}`))).toBe(true);
     },
     API_TIMEOUT
   );

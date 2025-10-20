@@ -1,13 +1,20 @@
 import { toSerpQuery } from "./symbols.js";
 
 const CG_KEY = import.meta.env.VITE_CG_KEY;
-const FMP_KEY = import.meta.env.VITE_FMP_KEY;
 const SERP_KEY = import.meta.env.VITE_SERP_KEY;
 const PROXY_URL = import.meta.env.VITE_PROXY_URL;
 
 const cache = new Map();
 const pending = new Map();
 const CACHE_TTL = 60000;
+
+const ensureSerpKey = () => {
+  if (!SERP_KEY) {
+    const error = new Error("SerpApi 주식 데이터 키가 필요합니다.");
+    error.code = "MISSING_SERP_KEY";
+    throw error;
+  }
+};
 
 const withCache = async (key, fetcher) => {
   const now = Date.now();
@@ -101,6 +108,7 @@ export const fetchCoinChart = (id, { signal } = {}) => {
 
 const fetchSerpQuote = (symbol, { signal } = {}) =>
   withCache(`serp:${symbol}`, async () => {
+    ensureSerpKey();
     const query = toSerpQuery(symbol);
     if (!query) {
       throw new Error(`지원하지 않는 종목입니다: ${symbol}`);
@@ -108,9 +116,7 @@ const fetchSerpQuote = (symbol, { signal } = {}) =>
     const search = new URL("https://serpapi.com/search.json");
     search.searchParams.set("engine", "google_finance");
     search.searchParams.set("q", query);
-    if (SERP_KEY) {
-      search.searchParams.set("api_key", SERP_KEY);
-    }
+    search.searchParams.set("api_key", SERP_KEY);
     const data = await fetchJson(search.toString(), { signal });
     if (data?.error) {
       throw new Error(data.error);
@@ -177,43 +183,6 @@ const fetchSerpQuotes = async (symbols, { signal } = {}) => {
   return results.filter(Boolean);
 };
 
-const fetchFmpQuoteMap = async (symbols, { signal } = {}) => {
-  if (!FMP_KEY || symbols.length === 0) {
-    return null;
-  }
-  const joined = symbols.join(",");
-  return withCache(`fmp:quote:${joined}`, async () => {
-    const url = new URL(`https://financialmodelingprep.com/api/v3/quote/${joined}`);
-    url.searchParams.set("apikey", FMP_KEY);
-    const data = await fetchJson(url.toString(), { signal });
-    if (!Array.isArray(data) || data.length === 0) {
-      return null;
-    }
-
-    const entries = data
-      .map((item) => {
-        const sym = item.symbol?.trim().toUpperCase();
-        const price = Number(item.price);
-        if (!sym || !Number.isFinite(price)) {
-          return null;
-        }
-        const timestamp = parseTimestamp(item.timestamp ?? item.date ?? item.updatedAt);
-        return [
-          sym,
-          {
-            symbol: sym,
-            price,
-            time: Number.isFinite(timestamp) ? Math.floor(timestamp / 1000) : Math.floor(Date.now() / 1000),
-            history: [],
-          },
-        ];
-      })
-      .filter(Boolean);
-
-    return entries.length > 0 ? Object.fromEntries(entries) : null;
-  });
-};
-
 export const fetchStockQuotes = async (symbols, { signal } = {}) => {
   const unique = Array.from(new Set(symbols.filter(Boolean)))
     .map((symbol) => symbol.trim().toUpperCase());
@@ -221,45 +190,19 @@ export const fetchStockQuotes = async (symbols, { signal } = {}) => {
     return [];
   }
 
-  const resultsMap = new Map();
-  let missing = unique.slice();
-
-  if (FMP_KEY) {
-    try {
-      const fmpMap = await fetchFmpQuoteMap(unique, { signal });
-      if (fmpMap) {
-        missing = missing.filter((symbol) => {
-          const record = fmpMap[symbol];
-          if (record) {
-            resultsMap.set(symbol, record);
-            return false;
-          }
-          return true;
-        });
-      }
-    } catch (error) {
-      console.warn("FMP quote fetch failed, falling back to SerpApi", error);
-    }
+  if (!SERP_KEY) {
+    const error = new Error("SerpApi 주식 데이터 키가 필요합니다.");
+    error.code = "MISSING_SERP_KEY";
+    throw error;
   }
 
-  if (missing.length > 0) {
-    if (!SERP_KEY && !FMP_KEY) {
-      const err = new Error("주식 데이터를 불러오려면 SerpApi 또는 FMP 키가 필요합니다.");
-      err.code = "MISSING_STOCK_KEY";
-      throw err;
-    }
-    const serpRecords = await fetchSerpQuotes(missing, { signal });
-    serpRecords.forEach((record) => {
-      resultsMap.set(record.symbol, record);
-    });
-    missing = missing.filter((symbol) => !resultsMap.has(symbol));
-  }
-
-  if (missing.length > 0) {
+  const serpRecords = await fetchSerpQuotes(unique, { signal });
+  if (serpRecords.length !== unique.length) {
+    const missing = unique.filter((symbol) => !serpRecords.some((record) => record.symbol === symbol));
     throw new Error(`주식 데이터를 찾을 수 없습니다. (${missing.join(", ")})`);
   }
 
-  return unique.map((symbol) => resultsMap.get(symbol));
+  return unique.map((symbol) => serpRecords.find((record) => record.symbol === symbol));
 };
 
 const SERP_HISTORY_CONFIG = {
@@ -267,13 +210,6 @@ const SERP_HISTORY_CONFIG = {
   "5D": { range: "5D" },
   "1Y": { range: "1Y" },
   "5Y": { range: "5Y" },
-};
-
-const FMP_HISTORY_CONFIG = {
-  "1D": { type: "intraday", interval: "5min", limit: 78 },
-  "5D": { type: "intraday", interval: "30min", limit: 65 },
-  "1Y": { type: "daily", timeseries: 252 },
-  "5Y": { type: "daily", timeseries: 1260 },
 };
 
 const sortByTime = (points) => points.slice().sort((a, b) => a.time - b.time);
@@ -291,6 +227,7 @@ const mapHistoricalPoints = (entries, valueKey = "close") =>
     .filter(Boolean);
 
 const fetchSerpHistory = async (symbol, config, { signal } = {}) => {
+  ensureSerpKey();
   const query = toSerpQuery(symbol);
   if (!query) {
     throw new Error("지원하지 않는 종목입니다.");
@@ -300,9 +237,7 @@ const fetchSerpHistory = async (symbol, config, { signal } = {}) => {
   url.searchParams.set("engine", "google_finance");
   url.searchParams.set("q", query);
   url.searchParams.set("range", config.range);
-  if (SERP_KEY) {
-    url.searchParams.set("api_key", SERP_KEY);
-  }
+  url.searchParams.set("api_key", SERP_KEY);
 
   const data = await fetchJson(url.toString(), { signal });
   if (data?.error) {
@@ -334,68 +269,6 @@ const fetchSerpHistory = async (symbol, config, { signal } = {}) => {
   };
 };
 
-const fetchFmpHistory = async (symbol, range, { signal } = {}) => {
-  const settings = FMP_HISTORY_CONFIG[range] ?? FMP_HISTORY_CONFIG["1D"];
-  if (!settings) {
-    return null;
-  }
-
-  if (settings.type === "intraday") {
-    const url = new URL(
-      `https://financialmodelingprep.com/api/v3/historical-chart/${settings.interval}/${symbol}`
-    );
-    if (settings.limit) {
-      url.searchParams.set("limit", String(settings.limit));
-    }
-    url.searchParams.set("apikey", FMP_KEY);
-
-    const data = await fetchJson(url.toString(), { signal });
-    if (!Array.isArray(data) || data.length < 2) {
-      return null;
-    }
-
-    const points = sortByTime(mapHistoricalPoints(data, "close"));
-    if (points.length < 2) {
-      return null;
-    }
-
-    return {
-      symbol,
-      points,
-      meta: {
-        provider: "FMP",
-        asOf: points[points.length - 1]?.time ?? null,
-      },
-    };
-  }
-
-  const url = new URL(`https://financialmodelingprep.com/api/v3/historical-price-full/${symbol}`);
-  if (settings.timeseries) {
-    url.searchParams.set("timeseries", String(settings.timeseries));
-  }
-  url.searchParams.set("apikey", FMP_KEY);
-
-  const data = await fetchJson(url.toString(), { signal });
-  const entries = Array.isArray(data?.historical) ? data.historical : [];
-  if (entries.length < 2) {
-    return null;
-  }
-
-  const points = sortByTime(mapHistoricalPoints(entries, "close"));
-  if (points.length < 2) {
-    return null;
-  }
-
-  return {
-    symbol,
-    points,
-    meta: {
-      provider: "FMP",
-      asOf: points[points.length - 1]?.time ?? null,
-    },
-  };
-};
-
 export const fetchStockHistory = async (symbol, range, { signal } = {}) => {
   const normalized = symbol?.trim().toUpperCase();
   if (!normalized) {
@@ -403,21 +276,9 @@ export const fetchStockHistory = async (symbol, range, { signal } = {}) => {
   }
 
   const config = SERP_HISTORY_CONFIG[range] ?? SERP_HISTORY_CONFIG["1D"];
-  const cacheNamespace = FMP_KEY ? "fmp" : "serp";
-  const cacheKey = `history:${cacheNamespace}:${normalized}:${config.range}`;
+  const cacheKey = `history:serp:${normalized}:${config.range}`;
 
   return withCache(cacheKey, async () => {
-    if (FMP_KEY) {
-      try {
-        const fmpResult = await fetchFmpHistory(normalized, range, { signal });
-        if (fmpResult) {
-          return fmpResult;
-        }
-      } catch (error) {
-        console.warn(`FMP history fetch failed for ${normalized}`, error);
-      }
-    }
-
     return fetchSerpHistory(normalized, config, { signal });
   });
 };
@@ -428,31 +289,68 @@ export const searchStocks = async (query, { signal, limit = 8 } = {}) => {
     return [];
   }
 
-  if (!FMP_KEY) {
-    const error = new Error("Financial Modeling Prep API 키가 필요합니다.");
-    error.code = "MISSING_FMP_KEY";
-    throw error;
-  }
-
+  ensureSerpKey();
   const key = `search:${trimmed.toLowerCase()}:${limit}`;
   return withCache(key, async () => {
-    const url = new URL("https://financialmodelingprep.com/api/v3/search-ticker");
-    url.searchParams.set("query", trimmed);
-    url.searchParams.set("limit", String(limit));
-    url.searchParams.set("exchange", "NASDAQ,NYSE,AMEX");
-    url.searchParams.set("apikey", FMP_KEY);
-
+    const url = new URL("https://serpapi.com/search.json");
+    url.searchParams.set("engine", "google_finance");
+    url.searchParams.set("q", trimmed);
+    url.searchParams.set("api_key", SERP_KEY);
     const data = await fetchJson(url.toString(), { signal });
-    if (!Array.isArray(data)) {
-      return [];
+    if (data?.error) {
+      throw new Error(data.error);
     }
 
-    return data
-      .filter((item) => item.symbol)
-      .map((item) => ({
-        symbol: item.symbol.toUpperCase(),
-        name: item.name || item.symbol.toUpperCase(),
-        exchange: item.exchangeShortName || item.stockExchange || "",
-      }));
+    const suggestions = [];
+    const seen = new Set();
+
+    const pushSuggestion = (stock, name = "", exchange = "") => {
+      if (!stock || suggestions.length >= limit) {
+        return;
+      }
+      const parts = stock.split(":");
+      const symbol = parts[0]?.trim().toUpperCase();
+      if (!symbol || seen.has(symbol)) {
+        return;
+      }
+      seen.add(symbol);
+      const derivedExchange = parts[1]?.trim() || exchange || "";
+      suggestions.push({
+        symbol,
+        name: name?.trim() || symbol,
+        exchange: derivedExchange,
+      });
+    };
+
+    const summary = data?.summary;
+    if (summary?.stock) {
+      pushSuggestion(summary.stock, summary.title, summary.exchange);
+    }
+
+    const markets = data?.markets;
+    if (markets && typeof markets === "object") {
+      Object.values(markets)
+        .filter(Array.isArray)
+        .forEach((collection) => {
+          collection.forEach((item) => {
+            pushSuggestion(item.stock, item.name);
+          });
+        });
+    }
+
+    const discover = Array.isArray(data?.discover_more) ? data.discover_more : [];
+    discover.forEach((section) => {
+      if (Array.isArray(section?.items)) {
+        section.items.forEach((item) => {
+          pushSuggestion(item.stock, item.name);
+        });
+      }
+    });
+
+    if (suggestions.length === 0) {
+      pushSuggestion(trimmed.toUpperCase());
+    }
+
+    return suggestions.slice(0, limit);
   });
 };
