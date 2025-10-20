@@ -573,7 +573,7 @@ body {
 .stock-grid {
   display: grid;
   gap: 16px;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(1, minmax(0, 1fr));
 }
 
 .stock-card {
@@ -987,8 +987,13 @@ body {
     flex-shrink: 0;
   }
 }
+@media (min-width: 768px) {
+  .stock-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
 
-@media (min-width: 1280px) {
+@media (min-width: 1024px) {
   .stock-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
