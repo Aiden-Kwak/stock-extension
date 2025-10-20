@@ -1,27 +1,24 @@
-export const coins = [
-  { id: "bitcoin", label: "Bitcoin" },
-  { id: "ethereum", label: "Ethereum" },
+export const defaultStocks = [
+  { symbol: "AAPL", name: "Apple", exchange: "NASDAQ" },
+  { symbol: "MSFT", name: "Microsoft", exchange: "NASDAQ" },
+  { symbol: "GOOGL", name: "Alphabet", exchange: "NASDAQ" },
+  { symbol: "AMZN", name: "Amazon", exchange: "NASDAQ" },
+  { symbol: "TSLA", name: "Tesla", exchange: "NASDAQ" },
+  { symbol: "NVDA", name: "NVIDIA", exchange: "NASDAQ" },
 ];
 
-export const stocks = [
-  { symbol: "AAPL", label: "Apple (AAPL)", exchange: "NASDAQ" },
-  { symbol: "GOOGL", label: "Google (GOOGL)", exchange: "NASDAQ" },
-];
-
-export const defaultSelection = coins[0].id;
-
-export const isCoin = (input) => coins.some((coin) => coin.id === input);
-
-export const toCoinId = (input) => (isCoin(input) ? input : null);
-
-export const getStockBySymbol = (input) => stocks.find((stock) => stock.symbol === input) || null;
-
-export const toStockSymbol = (input) => (getStockBySymbol(input) ? input : null);
+export const defaultSelection = defaultStocks;
 
 export const toSerpQuery = (input) => {
-  const stock = getStockBySymbol(input);
-  if (!stock) {
+  const normalized = input?.trim().toUpperCase();
+  if (!normalized) {
     return null;
   }
+
+  const stock = defaultStocks.find((item) => item.symbol === normalized);
+  if (!stock) {
+    return normalized;
+  }
+
   return stock.exchange ? `${stock.symbol}:${stock.exchange}` : stock.symbol;
 };
