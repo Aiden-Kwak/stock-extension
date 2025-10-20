@@ -1,8 +1,11 @@
 import { toSerpQuery } from "./symbols.js";
 
-const CG_KEY = import.meta.env.VITE_CG_KEY;
-const SERP_KEY = import.meta.env.VITE_SERP_KEY;
-const PROXY_URL = import.meta.env.VITE_PROXY_URL;
+const ENV =
+  (typeof import.meta !== "undefined" && import.meta.env) || (typeof process !== "undefined" ? process.env : {});
+
+const CG_KEY = ENV.VITE_CG_KEY;
+const SERP_KEY = ENV.VITE_SERP_KEY;
+const PROXY_URL = ENV.VITE_PROXY_URL;
 
 const cache = new Map();
 const pending = new Map();
@@ -151,7 +154,12 @@ const fetchSerpQuote = (symbol, { signal } = {}) =>
       data?.finance_results?.price?.updated_utc,
     ]
       .map((value) => {
-        if (!value) return null;
+        if (value === null || value === undefined) {
+          return null;
+        }
+        if (Number.isFinite(value)) {
+          return Math.floor(Number(value));
+        }
         const date = new Date(value);
         const parsed = Math.floor(date.getTime() / 1000);
         return Number.isFinite(parsed) ? parsed : null;
