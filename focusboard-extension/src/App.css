@@ -415,6 +415,17 @@ body {
   height: 100%;
 }
 
+.mini-chart__axis {
+  stroke: rgba(148, 163, 184, 0.45);
+  stroke-width: 1;
+}
+
+.mini-chart__label {
+  fill: rgba(148, 163, 184, 0.85);
+  font-size: 10px;
+  font-weight: 500;
+}
+
 .mini-chart__stroke--up {
   stroke: var(--chart-up);
   stroke-width: 2.5;

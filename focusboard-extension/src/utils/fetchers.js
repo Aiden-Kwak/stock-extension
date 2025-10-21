@@ -277,7 +277,7 @@ const fetchSerpHistory = async (symbol, config, { signal } = {}) => {
   };
 };
 
-export const fetchStockHistory = async (symbol, range, { signal } = {}) => {
+export const fetchStockHistory = async (symbol, range, { signal, forceRefresh = false } = {}) => {
   const normalized = symbol?.trim().toUpperCase();
   if (!normalized) {
     throw new Error("유효한 티커가 필요합니다.");
@@ -285,6 +285,11 @@ export const fetchStockHistory = async (symbol, range, { signal } = {}) => {
 
   const config = SERP_HISTORY_CONFIG[range] ?? SERP_HISTORY_CONFIG["1D"];
   const cacheKey = `history:serp:${normalized}:${config.range}`;
+
+  if (forceRefresh) {
+    cache.delete(cacheKey);
+    pending.delete(cacheKey);
+  }
 
   return withCache(cacheKey, async () => {
     return fetchSerpHistory(normalized, config, { signal });

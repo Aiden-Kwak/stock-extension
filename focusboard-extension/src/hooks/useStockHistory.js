@@ -7,7 +7,7 @@ const initialState = {
   error: null,
 };
 
-const useStockHistory = (symbol, range) => {
+const useStockHistory = (symbol, range, refreshToken = 0) => {
   const [state, setState] = useState(initialState);
 
   useEffect(() => {
@@ -20,7 +20,10 @@ const useStockHistory = (symbol, range) => {
     const controller = new AbortController();
 
     setState({ status: "loading", data: null, error: null });
-    fetchStockHistory(symbol, range, { signal: controller.signal })
+    fetchStockHistory(symbol, range, {
+      signal: controller.signal,
+      forceRefresh: refreshToken > 0,
+    })
       .then((data) => {
         if (!isMounted) return;
         setState({ status: "success", data, error: null });
@@ -37,7 +40,7 @@ const useStockHistory = (symbol, range) => {
       isMounted = false;
       controller.abort();
     };
-  }, [symbol, range]);
+  }, [symbol, range, refreshToken]);
 
   return state;
 };
